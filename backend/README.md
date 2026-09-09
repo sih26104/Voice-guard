@@ -102,6 +102,26 @@ Errors: `400` missing/empty file, `413` over 25 MiB, `502` invalid AI
 response, `503` AI service unavailable. Stack traces and filesystem paths
 are never exposed. Uploaded audio is never persisted or logged.
 
+## Smoke test
+
+A developer script sends a WAV to `POST /api/analyze` end-to-end
+(Spring → FastAPI → RiskEngine) and prints the verdict. PowerShell
+built-ins only (PowerShell 5.1+):
+
+```powershell
+# from the repository root
+cd backend; .\mvnw.cmd spring-boot:run          # plus FastAPI in another terminal
+
+powershell -ExecutionPolicy Bypass -File scripts\smoke-test-api.ps1                       # synthetic 2 s clip
+powershell -ExecutionPolicy Bypass -File scripts\smoke-test-api.ps1 C:\path\to\clip.wav   # your own WAV
+powershell -ExecutionPolicy Bypass -File scripts\smoke-test-api.ps1 -SpringBaseUrl http://127.0.0.1:8080
+```
+
+Exit codes: `0` success, `1` usage error (missing/oversized WAV),
+`2` backend unreachable, `3` request failed or invalid response.
+Uploaded audio is only streamed into the request - never printed,
+copied, or saved.
+
 ## Tests
 
 ```powershell
