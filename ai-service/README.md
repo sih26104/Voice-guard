@@ -3,6 +3,91 @@
 BONAFIDE vs SPOOF voice-classification prototype for SIH 2026 PS 26104.
 Python 3.13, CPU-only PyTorch — no GPU required anywhere in this pipeline.
 
+## FastAPI inference service
+
+The trained model is served over HTTP by a small FastAPI app in `src/api/`.
+The model loads **once at startup** (lifespan) — not per request — and the
+service fails fast if the checkpoint is missing.
+
+### Start the server (Windows PowerShell)
+
+```powershell
+cd ai-service
+.venv\Scripts\python.exe -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+```
+
+Optional: point at a different trained checkpoint with
+`$env:VOICEGUARD_CHECKPOINT = "models\trial\best_head.pt"` before starting.
+
+### GET /health
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/health
+```
+
+```json
+{ "status": "ok", "service": "voiceguard-ai", "model_loaded": true, "device": "cpu" }
+```
+
+### POST /predict
+
+Upload a temporary WAV (multipart/form-data, field name `file`). Audio is
+decoded via the existing `dataset.audio` utilities (mono, 16 kHz, float32,
+duration-validated) and inference reuses `model.predict` — CPU only.
+
+```powershell
+Invoke-RestMethod -Uri http://127.0.0.1:8000/predict -Method Post `
+    -InFile "C:\path\to\clip.wav" -ContentType "audio/wav"
+```
+
+or with curl:
+
+```bash
+curl -X POST http://127.0.0.1:8000/predict -F "file=@C:/path/to/clip.wav"
+```
+
+Expected response:
+
+```json
+{
+  "spoofProbability": 0.87,
+  "label": "SPOOF",
+  "duration_seconds": 7.66,
+  "sample_rate": 16000,
+  "inference_time_ms": 812.4
+}
+```
+
+Errors: `413` over 25 MiB, `415` non-`.wav` uploads, `422` missing/empty/
+undecodable audio.
+
+### Checkpoint requirement
+
+`models\trial\best_head.pt` must exist before startup (contains only head
+weights; the encoder comes from the local Hugging Face cache — one-time
+download already done, never per request).
+
+### Privacy & temporary audio
+
+Uploads are written to a temp file only for decoding, deleted immediately
+after inference, never persisted, never logged, never returned in responses,
+and never committed (Git-ignored under `models/`/`data/` rules — uploads are
+never written into the repo at all). No authentication yet; this is a
+prototype service.
+
+### Current model performance (prototype baseline — NOT production accuracy)
+
+| Metric | Test-split value |
+|---|---|
+| Accuracy | 72.67% |
+| Precision | 75.50% |
+| Recall | 72.67% |
+| F1 | 71.89% |
+
+CPU-only: ~0.7–0.9 s per inference for typical clips. The current subset
+shares TTS systems between train and test, so these numbers measure the
+pipeline, not unseen-TTS generalization.
+
 ## Layout
 
 ```

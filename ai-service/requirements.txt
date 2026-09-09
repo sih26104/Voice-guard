@@ -25,3 +25,7 @@ uvicorn==0.52.4
 
 # multipart/form-data parsing (file uploads via FastAPI UploadFile)
 python-multipart==0.0.32
+
+# Async HTTP client — required by FastAPI's TestClient (already present as
+# a transitive dependency of huggingface_hub/datasets; pinned for clarity)
+httpx==0.28.1
