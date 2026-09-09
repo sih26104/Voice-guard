@@ -1,0 +1,21 @@
+{
+  "_comment": "Template: copy to dataset_config.json and fill in real paths. No dataset is downloaded or assumed by the code — every value here is just a path reference.",
+  "name": "my-dataset",
+  "root": "data/<dataset-root>",
+  "audio_extensions": [".flac", ".wav"],
+  "splits": {
+    "train": {
+      "manifest": "data/<dataset-root>/train_manifest.json",
+      "labels": "data/<dataset-root>/train_labels.json"
+    },
+    "dev": {
+      "manifest": "data/<dataset-root>/dev_manifest.json",
+      "labels": "data/<dataset-root>/dev_labels.json"
+    },
+    "eval": {
+      "manifest": "data/<dataset-root>/eval_manifest.json",
+      "labels": "data/<dataset-root>/eval_labels.json"
+    }
+  },
+  "label_overrides": {}
+}
