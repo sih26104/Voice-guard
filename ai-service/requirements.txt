@@ -1,0 +1,27 @@
+# VoiceGuard AI-service dependencies
+# Target: Python 3.13.12 (Windows, CPU-only — no NVIDIA GPU detected)
+# Pinned for reproducibility. Regenerate with: pip freeze > requirements.txt
+
+# Deep learning (PyPI wheel on Windows = CPU build; no CUDA packages needed)
+torch==2.14.0
+
+# Hugging Face transformers (model loading/tokenizers)
+transformers==5.16.1
+
+# Audio feature extraction (MFCC, mel-spectrograms, etc.)
+librosa==1.0.0
+
+# Numerical computing
+numpy==2.5.3
+
+# Classical ML (e.g. classifier head on extracted features)
+scikit-learn==1.9.0
+
+# REST API framework
+fastapi==0.141.1
+
+# ASGI server
+uvicorn==0.52.4
+
+# multipart/form-data parsing (file uploads via FastAPI UploadFile)
+python-multipart==0.0.32
