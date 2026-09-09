@@ -1,0 +1,50 @@
+{
+  "best_epoch": 1,
+  "best_metric": "f1",
+  "best_score": 0.7485565282175451,
+  "best_val_metrics": {
+    "accuracy": 0.76,
+    "precision": 0.8178656813736145,
+    "recall": 0.76,
+    "f1": 0.7485565282175451,
+    "per_class": {
+      "bonafide": {
+        "precision": 0.9534883720930233,
+        "recall": 0.5466666666666666,
+        "f1": 0.6949152542372881,
+        "support": 75
+      },
+      "spoof": {
+        "precision": 0.6822429906542056,
+        "recall": 0.9733333333333334,
+        "f1": 0.8021978021978022,
+        "support": 75
+      }
+    },
+    "confusion_matrix": [
+      [
+        41,
+        34
+      ],
+      [
+        2,
+        73
+      ]
+    ],
+    "class_counts": {
+      "bonafide": 75,
+      "spoof": 75
+    },
+    "loss": 0.5267489047845205
+  },
+  "history": [
+    {
+      "epoch": 1,
+      "train_loss": 0.6312726085526602,
+      "val_loss": 0.5267489047845205,
+      "val_accuracy": 0.76,
+      "val_f1": 0.7485565282175451
+    }
+  ],
+  "checkpoint": "models\\trial\\best_head.pt"
+}

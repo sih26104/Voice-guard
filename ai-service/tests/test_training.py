@@ -247,5 +247,91 @@ class TestWaveformDatasetContract(unittest.TestCase):
             WaveformDataset(EmptyDataset())
 
 
+class TestConfusionMatrixPrinting(unittest.TestCase):
+    """Regression: matrix rows may be ndarrays (fresh metrics) or plain
+    lists (JSON round-trip through checkpoint/summary) — printing must
+    handle both. Bug seen after a real 1-epoch run: AttributeError on
+    ``row.tolist()`` when rows were lists.
+    """
+
+    def test_rows_helper_accepts_ndarray(self) -> None:
+        from scripts.common import confusion_matrix_rows
+
+        cm = np.array([[2, 0], [1, 3]], dtype=np.int64)
+        self.assertEqual(confusion_matrix_rows(cm), [[2, 0], [1, 3]])
+
+    def test_rows_helper_accepts_nested_lists(self) -> None:
+        from scripts.common import confusion_matrix_rows
+
+        cm = [[2, 0], [1, 3]]  # e.g. loaded from JSON in a checkpoint
+        self.assertEqual(confusion_matrix_rows(cm), [[2, 0], [1, 3]])
+
+    def test_summary_roundtrip_matrix_is_lists_and_printable(self) -> None:
+        # Simulate what train_head stores in best_val_metrics: .tolist()
+        # serialization of an ndarray, as also read back from JSON.
+        cm_ndarray = compute_metrics([0, 0, 1, 1], [0, 1, 1, 1])["confusion_matrix"]
+        summary_json = json.dumps({"confusion_matrix": cm_ndarray.tolist()})
+        cm_lists = json.loads(summary_json)["confusion_matrix"]
+
+        from scripts.common import confusion_matrix_rows
+
+        rows = confusion_matrix_rows(cm_lists)  # must not raise
+        self.assertEqual(rows, [[1, 1], [0, 2]])
+        for row in rows:  # the exact print-loop operation
+            print("  ", row)
+
+    def test_print_training_summary_handles_list_backed_matrix(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        from scripts import train_head
+
+        # Mirrors the exact state that crashed the real 1-epoch run:
+        # summary best_val_metrics after JSON serialization (list rows).
+        summary = {
+            "best_epoch": 1,
+            "best_metric": "f1",
+            "best_score": 0.7486,
+            "best_val_metrics": {
+                "accuracy": 0.76,
+                "precision": 0.8179,
+                "recall": 0.76,
+                "f1": 0.7486,
+                "confusion_matrix": [[41, 34], [2, 73]],
+            },
+            "history": [],
+            "checkpoint": "models/trial/best_head.pt",
+            "summary_path": "models/trial/training_summary.json",
+        }
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            train_head.print_training_summary(summary, best_metric="f1")
+        output = buffer.getvalue()
+        self.assertIn("confusion matrix", output)
+        self.assertIn("[41, 34]", output)
+        self.assertIn("[2, 73]", output)
+
+    def test_print_training_summary_handles_ndarray_matrix(self) -> None:
+        import io
+        from contextlib import redirect_stdout
+
+        from scripts import train_head
+
+        metrics = compute_metrics([0, 0, 1, 1], [0, 1, 1, 1])
+        summary = {
+            "best_epoch": 1,
+            "best_metric": "f1",
+            "best_score": metrics["f1"],
+            "best_val_metrics": metrics,  # fresh: ndarray confusion matrix
+            "history": [],
+            "checkpoint": "x.pt",
+        }
+        buffer = io.StringIO()
+        with redirect_stdout(buffer):
+            train_head.print_training_summary(summary, best_metric="f1")
+        self.assertIn("[1, 1]", buffer.getvalue())
+        self.assertIn("[0, 2]", buffer.getvalue())
+
+
 if __name__ == "__main__":
     unittest.main()

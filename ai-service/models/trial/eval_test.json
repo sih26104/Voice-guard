@@ -1,0 +1,42 @@
+{
+  "checkpoint": "models\\trial\\best_head.pt",
+  "dataset": "..\\data\\mlaad_subset",
+  "split": "test",
+  "encoder_name": "facebook/wav2vec2-base",
+  "epoch": 1,
+  "metrics": {
+    "accuracy": 0.7266666666666667,
+    "precision": 0.755,
+    "recall": 0.7266666666666667,
+    "f1": 0.7188571428571429,
+    "per_class": {
+      "bonafide": {
+        "precision": 0.84,
+        "recall": 0.56,
+        "f1": 0.6720000000000002,
+        "support": 75
+      },
+      "spoof": {
+        "precision": 0.67,
+        "recall": 0.8933333333333333,
+        "f1": 0.7657142857142857,
+        "support": 75
+      }
+    },
+    "class_counts": {
+      "bonafide": 75,
+      "spoof": 75
+    },
+    "confusion_matrix": [
+      [
+        42,
+        33
+      ],
+      [
+        8,
+        67
+      ]
+    ]
+  },
+  "caveat": "TTS systems overlap between train and test in this subset; results are a prototype baseline, not production performance."
+}

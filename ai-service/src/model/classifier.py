@@ -82,6 +82,15 @@ class VoiceGuardClassifier(nn.Module):
         self.encoder = Wav2Vec2Model.from_pretrained(encoder_name)
         self.encoder.eval()  # encoder is inference-only while frozen
         self.normalize_input = input_should_normalize()
+        self._encoder_frozen = bool(freeze_encoder)
+        if freeze_encoder:
+            for parameter in self.encoder.parameters():
+                parameter.requires_grad = False
+            # Frozen encoder = inference-only component: make sure gradient
+            # checkpointing is off (it exists to save activation memory for
+            # backward passes the encoder will never run) and pin eval mode.
+            self.encoder.gradient_checkpointing_disable()
+            self.encoder.eval()
 
         hidden = self.config.hidden_size
         self.head = nn.Sequential(
@@ -92,9 +101,6 @@ class VoiceGuardClassifier(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden // 2, len(Label)),
         )
-        if freeze_encoder:
-            for parameter in self.encoder.parameters():
-                parameter.requires_grad = False
 
     @classmethod
     def with_tiny_config(
@@ -136,7 +142,23 @@ class VoiceGuardClassifier(nn.Module):
         )
         for parameter in model.encoder.parameters():
             parameter.requires_grad = False
+        model._encoder_frozen = True
+        model.encoder.gradient_checkpointing_disable()
+        model.encoder.eval()
         return model
+
+    def train(self, mode: bool = True) -> "VoiceGuardClassifier":
+        """Set training mode; the frozen encoder is pinned to eval.
+
+        ``nn.Module.train(True)`` would otherwise re-enable dropout inside
+        the frozen encoder during head training. The encoder is an
+        inference-only feature extractor here, so it stays in eval mode
+        regardless of ``mode``.
+        """
+        super().train(mode)
+        if getattr(self, "_encoder_frozen", False):
+            self.encoder.eval()
+        return self
 
     # ------------------------------------------------------------------
     # Forward
@@ -166,7 +188,13 @@ class VoiceGuardClassifier(nn.Module):
             attention_mask = positions < lengths.clamp(min=1).unsqueeze(1)
         if self.normalize_input:
             values = normalize_waveform(values)
-        outputs = self.encoder(input_values=values, attention_mask=attention_mask)
+        if self._encoder_frozen:
+            # Frozen encoder: skip building the autograd graph entirely
+            # (no encoder activations retained, no encoder gradients).
+            with torch.no_grad():
+                outputs = self.encoder(input_values=values, attention_mask=attention_mask)
+        else:
+            outputs = self.encoder(input_values=values, attention_mask=attention_mask)
         hidden = outputs.last_hidden_state  # (batch, frames, hidden)
         if attention_mask is None:
             pooled = hidden.mean(dim=1)

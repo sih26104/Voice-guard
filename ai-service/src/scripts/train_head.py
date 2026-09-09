@@ -29,6 +29,7 @@ from .common import (
     TrainingConfig,
     WaveformDataset,
     collate_variable_length,
+    confusion_matrix_rows,
     evaluate_dataset,
     save_checkpoint,
     set_seeds,
@@ -49,6 +50,10 @@ def parse_args(argv=None) -> argparse.Namespace:
     parser.add_argument("--weight-decay", type=float, default=0.01)
     parser.add_argument("--num-workers", type=int, default=0,
                         help="DataLoader workers (keep 0 on Windows/CPU)")
+    parser.add_argument("--max-train-seconds", type=float, default=5.0,
+                        help="Deterministically crop training clips to this "
+                             "duration (validation/test stay full length); "
+                             "0 disables cropping")
     parser.add_argument("--seed", type=int, default=26104)
     parser.add_argument("--encoder", default="facebook/wav2vec2-base")
     parser.add_argument("--best-metric", choices=("f1", "loss"), default="f1",
@@ -69,6 +74,8 @@ def build_config(args: argparse.Namespace) -> TrainingConfig:
         weight_decay=args.weight_decay,
         num_workers=args.num_workers,
         seed=args.seed,
+        max_train_duration_s=(args.max_train_seconds
+                              if args.max_train_seconds > 0 else None),
         encoder_name=args.encoder,
         best_metric=args.best_metric,
     )
@@ -79,7 +86,8 @@ def train_head(config: TrainingConfig, output_dir: Path, log=print) -> dict:
     set_seeds(config.seed)
 
     train_set = WaveformDataset(
-        MlaadDataset(config.dataset_path, split=config.train_split)
+        MlaadDataset(config.dataset_path, split=config.train_split),
+        max_duration_s=config.max_train_duration_s,
     )
     val_dataset = MlaadDataset(config.dataset_path, split=config.validation_split)
     train_loader = DataLoader(
@@ -169,6 +177,29 @@ def train_head(config: TrainingConfig, output_dir: Path, log=print) -> dict:
     return summary
 
 
+def print_training_summary(summary: dict, best_metric: str = "f1") -> None:
+    """Print the end-of-training report.
+
+    The confusion matrix may be a NumPy array (fresh metrics) or nested
+    lists (JSON round-trip through checkpoint/summary files) —
+    :func:`confusion_matrix_rows` handles both.
+    """
+    print()
+    print("=== Training finished ===")
+    print(f"best epoch: {summary['best_epoch']} "
+          f"({best_metric}={summary['best_score']})")
+    best = summary["best_val_metrics"]
+    print(f"val accuracy={best['accuracy']:.4f} f1={best['f1']:.4f} "
+          f"precision={best['precision']:.4f} recall={best['recall']:.4f}")
+    cm = best.get("confusion_matrix")
+    if cm is not None:
+        print("confusion matrix (rows=true [bonafide, spoof], cols=pred):")
+        for row in confusion_matrix_rows(cm):
+            print("  ", row)
+    print(f"checkpoint: {summary['checkpoint']}")
+    print(f"summary:    {summary.get('summary_path')}")
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
     config = build_config(args)
@@ -178,21 +209,7 @@ def main(argv=None) -> int:
     print(config.to_json())
     print()
     summary = train_head(config, output_dir)
-
-    print()
-    print("=== Training finished ===")
-    print(f"best epoch: {summary['best_epoch']} "
-          f"({config.best_metric}={summary['best_score']})")
-    best = summary["best_val_metrics"]
-    print(f"val accuracy={best['accuracy']:.4f} f1={best['f1']:.4f} "
-          f"precision={best['precision']:.4f} recall={best['recall']:.4f}")
-    cm = best.get("confusion_matrix")
-    if cm is not None:
-        print("confusion matrix (rows=true [bonafide, spoof], cols=pred):")
-        for row in cm:
-            print("  ", row.tolist())
-    print(f"checkpoint: {summary['checkpoint']}")
-    print(f"summary:    {summary.get('summary_path')}")
+    print_training_summary(summary, config.best_metric)
     return 0
 
 

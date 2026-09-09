@@ -27,3 +27,6 @@ ai-service/dataset_config.json
 
 # Local ML datasets
 data/
+# Trained model binaries
+ai-service/models/**/*.pt
+

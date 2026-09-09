@@ -44,6 +44,14 @@ Per epoch it reports train loss, validation loss, accuracy, precision, recall,
 F1 and saves a checkpoint whenever validation F1 (or loss, with
 `--best-metric loss`) improves. Seeded (default 26104) for reproducibility.
 
+**CPU optimizations**: training clips longer than `--max-train-seconds`
+(default 5 s) are deterministically cropped (stable per-file hash — same
+segment every epoch; original WAVs untouched). Validation/test always run
+full-length and uncropped. The frozen encoder never builds an autograd graph
+(`torch.no_grad` forward, gradient checkpointing off, eval mode pinned even
+inside `model.train()`), which roughly halves per-step memory and skips all
+encoder backward work.
+
 ## Evaluation (PowerShell)
 
 ```powershell
@@ -69,8 +77,10 @@ its Hub id (cached after first use), so `.pt` files stay small (~1 MB).
 ## Limitations
 
 - **CPU speed**: ~0.5–0.9 s per clip forward; a full 3-split pass is ~10 min.
-  Batch size 4 and head-only training are the practical CPU regime; full
-  fine-tuning is not realistic on this machine.
+  Training is capped at 5-second crops (~0.2–0.7 s per clip), keeping an
+  epoch over 700 files in the low-tens-of-minutes range on CPU. Batch size 4
+  and head-only training are the practical CPU regime; full fine-tuning is
+  not realistic on this machine.
 - **Test set is not group-aware**: the 1,000-file subset puts the *same TTS
   systems* in train and test. Evaluation therefore measures the pipeline, not
   unseen-TTS generalization. Treat all reported numbers as prototype baseline

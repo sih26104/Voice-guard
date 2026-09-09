@@ -4,7 +4,9 @@ Everything here is CPU-safe and memory-conscious:
 
     * :class:`WaveformDataset` — wraps a ``BaseAudioDataset`` iterator in a
       torch ``Dataset`` that loads and preprocesses **one sample at a
-      time**; no waveforms are held in RAM beyond the current batch.
+      time**; no waveforms are held in RAM beyond the current batch. For
+      training, clips longer than ``max_duration_s`` (default 5 s) are
+      deterministically cropped so CPU epochs stay practical.
     * :func:`collate_variable_length` — pads a batch to its longest clip
       and returns real per-item lengths for masked pooling.
     * :func:`compute_metrics` — accuracy/precision/recall/F1/confusion.
@@ -14,6 +16,7 @@ Everything here is CPU-safe and memory-conscious:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import random
 from dataclasses import asdict, dataclass, field
@@ -32,6 +35,7 @@ from model.config import ID_TO_LABEL, LABEL_TO_ID
 
 __all__ = [
     "TrainingConfig",
+    "confusion_matrix_rows",
     "WaveformDataset",
     "collate_variable_length",
     "compute_metrics",
@@ -63,6 +67,7 @@ class TrainingConfig:
     weight_decay: float = 0.01
     num_workers: int = 0          # keep 0 on Windows/CPU: simplest + safe
     seed: int = 26104
+    max_train_duration_s: float = 5.0  # training-only crop cap; None disables
     encoder_name: str = "facebook/wav2vec2-base"
     best_metric: str = "f1"       # checkpoint selection metric
     label_to_id: dict = field(default_factory=lambda: {
@@ -90,20 +95,59 @@ class WaveformDataset(Dataset):
     ``__getitem__`` preprocesses exactly one sample (file decode, mono,
     resample, duration check) and returns it; nothing is cached, so RAM
     usage stays at one clip regardless of dataset size.
+
+    Args:
+        dataset: The ``BaseAudioDataset`` split to iterate.
+        max_duration_s: If set, clips longer than this are deterministically
+            cropped to this many seconds (see :meth:`crop_window`). Used for
+            CPU-feasible training; short clips are preserved untouched.
     """
 
-    def __init__(self, dataset: BaseAudioDataset) -> None:
+    #: Crop length cap (seconds) for training batches.
+    MAX_TRAIN_DURATION_S = 5.0
+
+    def __init__(
+        self,
+        dataset: BaseAudioDataset,
+        max_duration_s: Optional[float] = MAX_TRAIN_DURATION_S,
+    ) -> None:
         self._samples = list(dataset)  # metadata only (paths/labels); no audio
+        self._max_duration_s = max_duration_s
         if not self._samples:
             raise ValueError(f"Dataset split {dataset.split_name!r} is empty.")
 
     def __len__(self) -> int:
         return len(self._samples)
 
+    @staticmethod
+    def crop_window(total_samples: int, max_samples: int, key: str, seed: int = 0) -> int:
+        """Deterministic crop start for a clip longer than the cap.
+
+        The window is derived from a stable hash of the sample key (plus a
+        global seed), so every access to the same clip yields the same
+        5-second segment across epochs and runs — reproducible training —
+        while different clips spread across their full lengths instead of
+        always cropping the file start (which is often silence).
+        """
+        digest = hashlib.sha256(f"{seed}:{key}".encode("utf-8")).digest()
+        max_start = total_samples - max_samples
+        return int.from_bytes(digest[:4], "little") % (max_start + 1)
+
     def __getitem__(self, index: int):
         sample = self._samples[index]
         clip = sample.waveform()  # mono float32 16 kHz, duration-validated
-        return clip.samples, LABEL_TO_ID[sample.label], sample.key
+        if (
+            self._max_duration_s is not None
+            and clip.duration > self._max_duration_s
+        ):
+            max_samples = int(round(self._max_duration_s * clip.sample_rate))
+            start = self.crop_window(
+                clip.num_samples, max_samples, sample.key
+            )
+            samples = clip.samples[start : start + max_samples]
+        else:
+            samples = clip.samples
+        return samples, LABEL_TO_ID[sample.label], sample.key
 
 
 def collate_variable_length(batch):
@@ -121,6 +165,16 @@ def collate_variable_length(batch):
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
+
+
+def confusion_matrix_rows(confusion_matrix) -> list:
+    """Confusion matrix (ndarray or nested lists) -> list of plain rows.
+
+    Tolerant helper for display/report paths: ``compute_metrics`` yields a
+    NumPy array, while JSON round-trips (checkpoints, summary files) turn
+    it into nested Python lists — both must print without crashing.
+    """
+    return [[int(value) for value in row] for row in confusion_matrix]
 
 
 def compute_metrics(label_ids: Sequence[int], predicted_ids: Sequence[int]) -> dict:
@@ -208,11 +262,15 @@ def evaluate_dataset(
     criterion: Optional[nn.Module] = None,
     num_workers: int = 0,
 ) -> dict:
-    """Evaluate ``model`` over an entire ``BaseAudioDataset`` split."""
+    """Evaluate ``model`` over an entire ``BaseAudioDataset`` split.
+
+    Evaluation is deliberately **full-length and deterministic**: no
+    cropping is applied to validation/test clips.
+    """
     from torch.utils.data import DataLoader
 
     loader = DataLoader(
-        WaveformDataset(dataset),
+        WaveformDataset(dataset, max_duration_s=None),
         batch_size=batch_size,
         shuffle=False,
         collate_fn=collate_variable_length,

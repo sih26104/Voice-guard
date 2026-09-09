@@ -1,0 +1,4 @@
+
+# Trained model binaries
+ai-service/models/**/*.pt
+
