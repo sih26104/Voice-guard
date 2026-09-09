@@ -13,6 +13,8 @@ Public surface (import from here, not from submodules):
     AudioSample      - single labelled audio item
     AudioClip        - canonical mono float32 audio + sample rate
     preprocess       - file/array -> mono, resampled, validated clip
+    MlaadSample      - one MLAAD row (audio loaded lazily)
+    MlaadDataset     - concrete loader for the local MLAAD subset
 """
 
 from .labels import Label, normalize_label
@@ -26,6 +28,7 @@ from .audio import (
     load_audio,
     preprocess,
 )
+from .mlaad import MLAAD_SPLITS, MlaadDataset, MlaadDatasetError, MlaadSample
 
 __all__ = [
     "Label",
@@ -43,4 +46,8 @@ __all__ = [
     "TARGET_SAMPLE_RATE",
     "load_audio",
     "preprocess",
+    "MLAAD_SPLITS",
+    "MlaadSample",
+    "MlaadDataset",
+    "MlaadDatasetError",
 ]

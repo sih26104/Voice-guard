@@ -20,9 +20,11 @@ src/dataset/
 ├── config.py              DatasetConfig / SplitConfig + load_config()
 ├── base_audio_dataset.py  AudioSample dataclass + BaseAudioDataset ABC
 ├── audio.py               dataset-agnostic audio loading/preprocessing
+├── mlaad.py               concrete loader for the local MLAAD subset
 └── README.md              this file
 
 ../tests/test_audio.py      unit tests for audio.py (synthesized audio only)
+../tests/test_mlaad.py      unit tests for the MLAAD loader (temp fixtures)
 dataset_config.example.json template for per-dataset path configs (repo root
                             of ai-service; copy to dataset_config.json)
 ```
@@ -70,6 +72,37 @@ Shape:
 loader decides how to parse them. Unknown labels and unknown splits raise
 immediately (fail loudly, never guess).
 
+## MLAAD subset loader
+
+`mlaad.py` implements the concrete loader for the local subset under
+`data/mlaad_subset/` (Git-ignored):
+
+- **Source of truth**: `splits.csv` (`local_path, hf_path, label, language,
+  tts_system, split`) — the same file the split script wrote.
+- **Splits**: `train` / `validation` / `test`; anything else raises.
+- **Labels**: resolved via the canonical `normalize_label` (BONAFIDE/SPOOF,
+  any casing) — no conflicting label enum exists.
+- **Metadata**: `language` always; `tts_system` present on SPOOF rows,
+  `None` for BONAFIDE.
+- **Lazy audio**: parsing validates the CSV eagerly (row-level errors with
+  line numbers, unknown labels/splits, duplicate paths, missing required
+  columns); iterating verifies each referenced file exists but never opens
+  it. Audio loads one sample at a time via `MlaadSample.waveform()`, which
+  delegates to `audio.preprocess` (mono → 16 kHz → validated). The 30 s
+  max-duration default is deliberately disabled for MLAAD (clips run up to
+  ~38.5 s).
+- **Paths**: `local_path` values are repo-root-relative (Windows separators
+  in the CSV are normalized), so the loader is platform-neutral.
+
+```python
+from dataset import MlaadDataset
+
+train = MlaadDataset("../data/mlaad_subset", split="train")
+print(len(train))                # 700
+for sample in train:             # no audio touched yet
+    clip = sample.waveform()     # AudioClip: mono float32, 16 kHz
+```
+
 ## Loader contract
 
 Concrete loaders subclass `BaseAudioDataset` and implement:
@@ -84,8 +117,9 @@ awaiting concrete behavior.
 
 ## Extending later (non-goals for now)
 
-- A concrete `AsvspoofDataset(BaseAudioDataset)` implementing discovery of
-  its own protocol files
+- Other concrete loaders (e.g. `AsvspoofDataset(BaseAudioDataset)`) can be
+  added beside `mlaad.py`: subclass the ABC, own the manifest format, reuse
+  `audio.py`
 - Feature extraction (MFCC / mel-spectrogram) — belongs in a separate
   `features/` module, not here
 - Torch `Dataset`/`DataLoader` wrappers — separate adapters, keep this

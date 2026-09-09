@@ -24,3 +24,6 @@ Thumbs.db
 
 # VoiceGuard local config (real dataset paths stay out of git)
 ai-service/dataset_config.json
+
+# Local ML datasets
+data/
