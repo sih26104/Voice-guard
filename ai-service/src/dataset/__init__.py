@@ -28,7 +28,13 @@ from .audio import (
     load_audio,
     preprocess,
 )
-from .mlaad import MLAAD_SPLITS, MlaadDataset, MlaadDatasetError, MlaadSample
+from .mlaad import (
+    CORE_MLAAD_SPLITS,
+    MLAAD_SPLITS,
+    MlaadDataset,
+    MlaadDatasetError,
+    MlaadSample,
+)
 
 __all__ = [
     "Label",
@@ -47,6 +53,7 @@ __all__ = [
     "load_audio",
     "preprocess",
     "MLAAD_SPLITS",
+    "CORE_MLAAD_SPLITS",
     "MlaadSample",
     "MlaadDataset",
     "MlaadDatasetError",

@@ -18,7 +18,7 @@ FastAPI      POST /predict              (ai-service, CPU inference)
       |
       | { spoofProbability, label, duration_seconds, ... }
       v
-Spring Boot  RiskEngine (existing, reused — bands 0-30/31-60/61-80/81-100)
+Spring Boot  RiskEngine (existing, reused — bands 0-40/41-60/61-80/81-100)
       |
       v
 Combined JSON verdict

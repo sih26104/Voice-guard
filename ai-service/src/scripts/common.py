@@ -9,7 +9,9 @@ Everything here is CPU-safe and memory-conscious:
       deterministically cropped so CPU epochs stay practical.
     * :func:`collate_variable_length` — pads a batch to its longest clip
       and returns real per-item lengths for masked pooling.
-    * :func:`compute_metrics` — accuracy/precision/recall/F1/confusion.
+    * :func:`compute_metrics` — accuracy/precision/recall/F1/confusion
+      plus balanced accuracy, ROC-AUC (from spoof probabilities), FPR/FNR
+      and per-spoof-class metrics.
     * :func:`evaluate_dataset` / :func:`evaluate_model` — shared loops.
     * :func:`save_checkpoint` / :func:`load_checkpoint` — head + config.
 """
@@ -19,12 +21,14 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import warnings
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable, Optional, Sequence
 
 import numpy as np
 import torch
+from sklearn.metrics import balanced_accuracy_score, roc_auc_score
 from torch import Tensor, nn
 from torch.utils.data import Dataset
 
@@ -44,6 +48,7 @@ __all__ = [
     "save_checkpoint",
     "load_checkpoint",
     "set_seeds",
+    "spoof_probabilities_only",
 ]
 
 NUM_CLASSES = len(Label)
@@ -177,11 +182,64 @@ def confusion_matrix_rows(confusion_matrix) -> list:
     return [[int(value) for value in row] for row in confusion_matrix]
 
 
-def compute_metrics(label_ids: Sequence[int], predicted_ids: Sequence[int]) -> dict:
+def spoof_probabilities_only(spoof_probabilities) -> np.ndarray:
+    """Coerce a spoof-probability sequence into a finite ``float64`` array.
+
+    Accepts lists/arrays/tensors of raw sigmoid probabilities **or** the
+    per-batch ``model(values).exp()[:, 1]`` style values (which are also
+    just sigmoid probabilities). Raises ``ValueError`` on shape mismatch
+    or NaN/Inf — a corrupted probability vector must never silently
+    degrade ROC-AUC.
+    """
+    probs = np.asarray(spoof_probabilities, dtype=np.float64).reshape(-1)
+    if probs.size == 0:
+        raise ValueError("Spoof probability vector is empty.")
+    if not np.all(np.isfinite(probs)):
+        raise ValueError("Spoof probabilities contain NaN or infinite values.")
+    return probs
+
+
+def _roc_auc_score_safe(y_true: np.ndarray, spoof_probs: Optional[np.ndarray]) -> Optional[float]:
+    """ROC-AUC from the *continuous* spoof probability — or ``None``.
+
+    Defined only when both classes are present in ``y_true``: with a
+    single class sklearn returns ``nan`` (and warns), which we refuse to
+    surface as a number. ``None`` is therefore also returned whenever
+    probabilities were not collected. Undefined-metric sklearn warnings
+    are suppressed for the single-class path we deliberately guard.
+    """
+    if spoof_probs is None or len(spoof_probs) != len(y_true):
+        return None
+    if int((y_true == 0).sum()) == 0 or int((y_true == 1).sum()) == 0:
+        return None  # undefined for a single class — do not fabricate a value
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", category=UserWarning)
+        return float(roc_auc_score(y_true, spoof_probs))
+
+
+def compute_metrics(
+    label_ids: Sequence[int],
+    predicted_ids: Sequence[int],
+    spoof_probabilities: Optional[Sequence[float]] = None,
+) -> dict:
     """Accuracy, precision/recall/F1 (macro + per-class) and confusion matrix.
 
+    Extended metrics (backward-compatible additions — every key that
+    existed before is unchanged):
+
+    * ``balanced_accuracy`` — mean of BONAFIDE recall and SPOOF recall;
+      ``None`` (not a fabricated value) when only one class is present.
+    * ``roc_auc`` — from the **continuous spoof probability** (never from
+      argmax predictions); ``None`` when probabilities were not supplied
+      or only one class is present.
+    * ``spoof_precision`` / ``spoof_recall`` / ``spoof_f1`` — SPOOF-as-
+      positive-class metrics (mirror ``per_class['spoof']``).
+    * ``false_positive_rate`` — FP / (FP + TN) (bonafide misclassified).
+    * ``false_negative_rate`` — FN / (FN + TP) (spoof missed).
+
     Confusion matrix convention: ``cm[true][pred]``.
-    Pure Python/NumPy — no sklearn dependency needed here.
+    Pure Python/NumPy for the classic metrics; sklearn only for
+    balanced accuracy and ROC-AUC.
     """
     y_true = np.asarray(label_ids, dtype=np.int64)
     y_pred = np.asarray(predicted_ids, dtype=np.int64)
@@ -206,11 +264,44 @@ def compute_metrics(label_ids: Sequence[int], predicted_ids: Sequence[int]) -> d
     macro_precision = float(np.mean([v["precision"] for v in per_class.values()]))
     macro_recall = float(np.mean([v["recall"] for v in per_class.values()]))
 
+    # Confusion-cell counts, cm[true][pred]: [[TN, FP], [FN, TP]].
+    tn = int(((y_pred == 0) & (y_true == 0)).sum())
+    fp = int(((y_pred == 1) & (y_true == 0)).sum())
+    fn = int(((y_pred == 0) & (y_true == 1)).sum())
+    tp = int(((y_pred == 1) & (y_true == 1)).sum())
+
+    # SPOOF-as-positive-class FPR/FNR. Both denominators are guaranteed
+    # non-zero because per-class support has already been validated > 0.
+    false_positive_rate = fp / (fp + tn) if (fp + tn) else None
+    false_negative_rate = fn / (fn + tp) if (fn + tp) else None
+
+    # Balanced accuracy = mean(BONAFIDE recall, SPOOF recall). Defined
+    # only when both classes are present: sklearn returns a degenerate
+    # value (with a warning) on single-class input, so we refuse it.
+    both_classes = tn + fp > 0 and fn + tp > 0
+    if both_classes:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=UserWarning)
+            balanced_accuracy = float(balanced_accuracy_score(y_true, y_pred))
+    else:
+        balanced_accuracy = None
+
+    spoof_probs: Optional[np.ndarray] = None
+    if spoof_probabilities is not None:
+        spoof_probs = spoof_probabilities_only(spoof_probabilities)
+        if len(spoof_probs) != len(y_true):
+            raise ValueError(
+                f"spoof_probabilities length {len(spoof_probs)} does not "
+                f"match {len(y_true)} labels."
+            )
+    roc_auc = _roc_auc_score_safe(y_true, spoof_probs)
+
     cm = np.zeros((2, 2), dtype=np.int64)
     for truth, pred in zip(y_true, y_pred):
         cm[truth, pred] += 1
 
     return {
+        # --- pre-existing keys: unchanged -------------------------------
         "accuracy": accuracy,
         "precision": macro_precision,
         "recall": macro_recall,
@@ -221,6 +312,14 @@ def compute_metrics(label_ids: Sequence[int], predicted_ids: Sequence[int]) -> d
             Label.BONAFIDE.value: int((y_true == 0).sum()),
             Label.SPOOF.value: int((y_true == 1).sum()),
         },
+        # --- new keys ----------------------------------------------------
+        "balanced_accuracy": balanced_accuracy,
+        "roc_auc": roc_auc,          # None unless probabilities provided
+        "spoof_precision": per_class[Label.SPOOF.value]["precision"],
+        "spoof_recall": per_class[Label.SPOOF.value]["recall"],
+        "spoof_f1": per_class[Label.SPOOF.value]["f1"],
+        "false_positive_rate": false_positive_rate,
+        "false_negative_rate": false_negative_rate,
     }
 
 
@@ -234,11 +333,22 @@ def evaluate_model(
     model: VoiceGuardClassifier,
     loader: Iterable,
     criterion: Optional[nn.Module] = None,
+    collect_probabilities: bool = True,
 ) -> dict:
-    """Run one full pass over ``loader``; return loss (optional) + metrics."""
+    """Run one full pass over ``loader``; return loss (optional) + metrics.
+
+    Spoof probabilities are collected by default (``collect_probabilities=True``)
+    so ROC-AUC is computed from the continuous score; set it to ``False``
+    for a loss-only pass over a huge split. The probabilities themselves
+    stay **out of** the returned metrics dict: they are consumed by
+    :func:`compute_metrics` and only surfaced as scalar ``roc_auc``, so
+    checkpoint payloads (``save_checkpoint`` stores the metrics dict)
+    remain scalar-only.
+    """
     model.eval()
     all_labels: list = []
     all_preds: list = []
+    all_spoof_probs: Optional[list] = [] if collect_probabilities else None
     total_loss = 0.0
     total_items = 0
     for values, lengths, label_ids, _keys in loader:
@@ -247,9 +357,16 @@ def evaluate_model(
             loss = criterion(logits, label_ids)
             total_loss += float(loss.item()) * label_ids.shape[0]
             total_items += label_ids.shape[0]
+        if all_spoof_probs is not None:
+            # Softmax over both logits, SPOOF column (class id 1): the
+            # continuous score ROC-AUC must see. Same value the API's
+            # ``predict`` reports as ``spoof_probability``.
+            all_spoof_probs.extend(
+                float(v) for v in torch.softmax(logits, dim=-1)[:, 1].tolist()
+            )
         all_labels.extend(int(v) for v in label_ids.tolist())
         all_preds.extend(int(v) for v in logits.argmax(dim=-1).tolist())
-    metrics = compute_metrics(all_labels, all_preds)
+    metrics = compute_metrics(all_labels, all_preds, spoof_probabilities=all_spoof_probs)
     if criterion is not None and total_items:
         metrics["loss"] = total_loss / total_items
     return metrics
@@ -291,7 +408,13 @@ def save_checkpoint(
     epoch: int,
     metrics: dict,
 ) -> Path:
-    """Save head weights + encoder name + training config + metrics."""
+    """Save head weights + encoder name + training config + metrics.
+
+    Array-valued metric entries (e.g. the confusion matrix) are converted
+    to plain lists so the ``.pt`` payload stays JSON-serializable; scalar
+    and dict entries (including all evaluation metrics and ``loss``) pass
+    through unchanged.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     state = {
@@ -299,7 +422,11 @@ def save_checkpoint(
         "head_state_dict": {k: v for k, v in model.head.state_dict().items()},
         "config": json.loads(config.to_json()),
         "epoch": epoch,
-        "metrics": {k: v for k, v in metrics.items() if k != "confusion_matrix"},
+        "metrics": {
+            k: (v.tolist() if hasattr(v, "tolist") else v)
+            for k, v in metrics.items()
+            if k != "confusion_matrix"
+        },
         "label_to_id": {label.value: idx for label, idx in LABEL_TO_ID.items()},
     }
     torch.save(state, path)

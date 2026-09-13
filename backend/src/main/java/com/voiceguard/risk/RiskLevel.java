@@ -4,8 +4,8 @@ package com.voiceguard.risk;
  * Prototype risk bands agreed for the VoiceGuard prototype.
  *
  * <pre>
- *   0-30   LOW
- *   31-60  MEDIUM
+ *   0-40   LOW
+ *   41-60  MEDIUM
  *   61-80  HIGH
  *   81-100 CRITICAL
  * </pre>
@@ -15,8 +15,8 @@ package com.voiceguard.risk;
  * partition 0-100 without gaps.
  */
 public enum RiskLevel {
-    LOW(0, 30),
-    MEDIUM(31, 60),
+    LOW(0, 40),
+    MEDIUM(41, 60),
     HIGH(61, 80),
     CRITICAL(81, 100);
 

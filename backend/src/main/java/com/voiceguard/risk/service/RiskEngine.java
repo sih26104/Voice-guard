@@ -16,8 +16,8 @@ import org.springframework.stereotype.Service;
  *
  * <p>Mapping (prototype spec):
  * <pre>
- *   0-30   LOW
- *   31-60  MEDIUM
+ *   0-40   LOW
+ *   41-60  MEDIUM
  *   61-80  HIGH
  *   81-100 CRITICAL
  * </pre>

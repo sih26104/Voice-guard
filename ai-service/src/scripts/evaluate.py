@@ -2,7 +2,9 @@
 
 Loads a checkpoint saved by ``train_head.py``, rebuilds the frozen-encoder
 model, runs inference over the requested split and reports accuracy,
-precision, recall, F1, the confusion matrix and class counts.
+precision, recall, F1, balanced accuracy, ROC-AUC (from the continuous
+SPOOF probability), spoof precision/recall/F1, FPR/FNR, the confusion
+matrix and class counts.
 
 Run (from ``ai-service/``)::
 
@@ -38,6 +40,11 @@ def parse_args(argv=None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _fmt(value) -> str:
+    """Format a metric for printing; ``None`` means undefined."""
+    return "n/a" if value is None else f"{value:.4f}"
+
+
 def main(argv=None) -> int:
     args = parse_args(argv)
 
@@ -57,14 +64,24 @@ def main(argv=None) -> int:
 
     metrics = evaluate_dataset(model, dataset, batch_size=args.batch_size)
 
+    cm = metrics["confusion_matrix"]
     print()
     print("=== Results (prototype baseline — NOT production performance) ===")
-    print(f"accuracy : {metrics['accuracy']:.4f}")
-    print(f"precision: {metrics['precision']:.4f} (macro)")
-    print(f"recall   : {metrics['recall']:.4f} (macro)")
-    print(f"f1       : {metrics['f1']:.4f} (macro)")
+    print(f"accuracy            : {_fmt(metrics['accuracy'])}")
+    print(f"balanced accuracy   : {_fmt(metrics['balanced_accuracy'])}")
+    print(f"macro precision     : {_fmt(metrics['precision'])}")
+    print(f"macro recall        : {_fmt(metrics['recall'])}")
+    print(f"macro f1            : {_fmt(metrics['f1'])}")
+    print(f"roc-auc             : {_fmt(metrics['roc_auc'])}"
+          + ("" if metrics["roc_auc"] is not None
+             else "  (undefined: needs both classes + spoof probabilities)"))
+    print(f"spoof precision     : {_fmt(metrics['spoof_precision'])}")
+    print(f"spoof recall        : {_fmt(metrics['spoof_recall'])}")
+    print(f"spoof f1            : {_fmt(metrics['spoof_f1'])}")
+    print(f"false positive rate : {_fmt(metrics['false_positive_rate'])}")
+    print(f"false negative rate : {_fmt(metrics['false_negative_rate'])}")
     if "loss" in metrics:
-        print(f"loss     : {metrics['loss']:.4f}")
+        print(f"loss                : {metrics['loss']:.4f}")
     print()
     print("per class:")
     for name, values in metrics["per_class"].items():
@@ -73,7 +90,6 @@ def main(argv=None) -> int:
               f"support={values['support']}")
     print()
     print(f"class counts: {metrics['class_counts']}")
-    cm = metrics["confusion_matrix"]
     print("confusion matrix (rows=true [bonafide, spoof], cols=pred):")
     for row in cm:
         print("  ", row.tolist())
@@ -93,9 +109,17 @@ def main(argv=None) -> int:
             "epoch": metadata.get("epoch"),
             "metrics": {
                 "accuracy": metrics["accuracy"],
+                "balanced_accuracy": metrics["balanced_accuracy"],
                 "precision": metrics["precision"],
                 "recall": metrics["recall"],
                 "f1": metrics["f1"],
+                "roc_auc": metrics["roc_auc"],
+                "spoof_precision": metrics["spoof_precision"],
+                "spoof_recall": metrics["spoof_recall"],
+                "spoof_f1": metrics["spoof_f1"],
+                "false_positive_rate": metrics["false_positive_rate"],
+                "false_negative_rate": metrics["false_negative_rate"],
+                "loss": metrics.get("loss"),
                 "per_class": metrics["per_class"],
                 "class_counts": metrics["class_counts"],
                 "confusion_matrix": cm.tolist(),

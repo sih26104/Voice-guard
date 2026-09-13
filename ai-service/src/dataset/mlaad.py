@@ -16,7 +16,9 @@ Facts this loader encodes (and nothing more):
       normalizes them so the code stays platform-neutral).
     * ``label`` is BONAFIDE/SPOOF (any casing accepted, resolved via the
       canonical :func:`dataset.labels.normalize_label` — no new enum).
-    * ``split`` is ``train`` / ``validation`` / ``test``.
+    * ``split`` is ``train`` / ``validation`` / ``test`` (every MLAAD
+      split file), plus ``test-unseen-tts`` when the CSV provides it
+      (the full-dataset splits do; see ``create_mlaad_full_splits.py``).
     * ``tts_system`` is empty for BONAFIDE rows.
 
 Design:
@@ -53,7 +55,14 @@ __all__ = [
 ]
 
 #: Splits defined by the MLAAD split script (also validated eagerly).
-MLAAD_SPLITS: Tuple[str, ...] = ("train", "validation", "test")
+#: ``test-unseen-tts`` exists only in split files produced by
+#: ``scripts/create_mlaad_full_splits.py``; the prototype subset keeps
+#: the original three.
+MLAAD_SPLITS: Tuple[str, ...] = ("train", "validation", "test", "test-unseen-tts")
+
+#: Splits every valid MLAAD splits.csv must be able to serve. Historic
+#: behaviour for the 1,000-file prototype subset — unchanged.
+CORE_MLAAD_SPLITS: Tuple[str, ...] = ("train", "validation", "test")
 
 _REQUIRED_COLUMNS: Tuple[str, ...] = (
     "local_path",
@@ -116,7 +125,10 @@ class MlaadDataset(BaseAudioDataset):
             Audio ``local_path`` values are resolved relative to the
             repository root (two levels above this package), matching
             how the split script wrote them.
-        split: One of ``train`` / ``validation`` / ``test``.
+        split: One of ``train`` / ``validation`` / ``test`` — or
+            ``test-unseen-tts`` for split files that contain it (the
+            full-dataset splits; the CSV row values are validated
+            independently of this argument).
         splits_filename: CSV file name inside ``dataset_root``. Kept as
             a parameter only for tests; production code uses the default.
         repo_root: Base directory ``local_path`` values resolve against.
@@ -148,6 +160,14 @@ class MlaadDataset(BaseAudioDataset):
                 f"Unknown split {split!r}; expected one of: {list(MLAAD_SPLITS)}"
             )
         rows = self._load_rows()
+        if split == "test-unseen-tts" and not any(
+            row["split"] == "test-unseen-tts" for row in rows
+        ):
+            raise ValueError(
+                f"Split {split!r} requested, but {self._splits_path} has no "
+                f"'test-unseen-tts' rows (regenerate splits with "
+                f"scripts/create_mlaad_full_splits.py)."
+            )
         self._rows: Dict[str, dict] = {row["local_path"]: row for row in rows}
 
         config = self._build_config(len(rows))

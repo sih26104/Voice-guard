@@ -65,8 +65,9 @@ class RiskEngineTest {
     @Test
     void boundariesMapToCorrectBands() {
         assertThat(analyze("0.00").riskLevel()).isEqualTo(RiskLevel.LOW);
-        assertThat(analyze("0.30").riskLevel()).isEqualTo(RiskLevel.LOW);   // 30 -> LOW
-        assertThat(analyze("0.31").riskLevel()).isEqualTo(RiskLevel.MEDIUM); // 31 -> MEDIUM
+        assertThat(analyze("0.30").riskLevel()).isEqualTo(RiskLevel.LOW);
+        assertThat(analyze("0.40").riskLevel()).isEqualTo(RiskLevel.LOW);   // 40 -> LOW
+        assertThat(analyze("0.41").riskLevel()).isEqualTo(RiskLevel.MEDIUM); // 41 -> MEDIUM
         assertThat(analyze("0.60").riskLevel()).isEqualTo(RiskLevel.MEDIUM); // 60 -> MEDIUM
         assertThat(analyze("0.61").riskLevel()).isEqualTo(RiskLevel.HIGH);   // 61 -> HIGH
         assertThat(analyze("0.80").riskLevel()).isEqualTo(RiskLevel.HIGH);   // 80 -> HIGH
