@@ -1,31 +1,31 @@
 # VoiceGuard AI-service dependencies
-# Target: Python 3.13.12 (Windows, CPU-only — no NVIDIA GPU detected)
-# Pinned for reproducibility. Regenerate with: pip freeze > requirements.txt
+# Linux CPU deployment
 
-# Deep learning (PyPI wheel on Windows = CPU build; no CUDA packages needed)
-torch==2.14.0
+--extra-index-url https://download.pytorch.org/whl/cpu
 
-# Hugging Face transformers (model loading/tokenizers)
+# CPU-only PyTorch
+torch==2.14.0+cpu
+
+# Hugging Face transformers
 transformers==5.16.1
 
-# Audio feature extraction (MFCC, mel-spectrograms, etc.)
+# Audio feature extraction
 librosa==1.0.0
 
 # Numerical computing
 numpy==2.5.3
 
-# Classical ML (e.g. classifier head on extracted features)
+# Classical ML
 scikit-learn==1.9.0
 
-# REST API framework
+# REST API
 fastapi==0.141.1
 
 # ASGI server
 uvicorn==0.52.4
 
-# multipart/form-data parsing (file uploads via FastAPI UploadFile)
+# File uploads
 python-multipart==0.0.32
 
-# Async HTTP client — required by FastAPI's TestClient (already present as
-# a transitive dependency of huggingface_hub/datasets; pinned for clarity)
+# Async HTTP client
 httpx==0.28.1
